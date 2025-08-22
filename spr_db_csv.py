@@ -1,110 +1,127 @@
-import sqlite3
+"""
+SPR Database CSV Export Module
+
+This module loads data from the SQLite database, extracts specific pool APY data,
+and exports it to CSV format for external analysis.
+"""
+
 import pandas as pd
 from datetime import datetime
+from typing import Optional
 
-def load_pool_data(db_filename="defi_prime_rate.db"):
+from config import DEFAULT_DB_FILENAME
+from utils import load_data_from_db, validate_dataframe, print_data_summary
+
+
+def extract_pool_apy_data(df: pd.DataFrame, pool_number: int = 0) -> Optional[pd.DataFrame]:
     """
-    Load data from SQLite database and extract pool 0 APY and weighted APY
+    Extract specific pool APY and weighted APY data.
     
     Args:
-        db_filename (str): SQLite database filename
+        df: Full dataset from database
+        pool_number: Pool number to extract (default: 0)
         
     Returns:
-        pd.DataFrame: DataFrame with pool 0 APY and weighted APY
+        DataFrame with pool APY and weighted APY, or None if failed
     """
-    try:
-        print(f"Loading data from {db_filename}...")
-        conn = sqlite3.connect(db_filename)
-        
-        # Load main data
-        df = pd.read_sql('SELECT * FROM pool_data', conn)
-        
-        # Set date as index
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-        
-        conn.close()
-        
-        print(f"Successfully loaded data")
-        print(f"Date range: {df.index.min()} to {df.index.max()}")
-        print(f"Total data points: {len(df)}")
-        
-        return df
-    except Exception as e:
-        print(f"Error loading data from database: {e}")
-        return None
-
-def extract_pool_apy_data(df):
-    """
-    Extract pool 0 APY and weighted APY data
-    
-    Args:
-        df (pd.DataFrame): Full dataset from database
-        
-    Returns:
-        pd.DataFrame: DataFrame with pool 0 APY and weighted APY
-    """
-    # Extract pool 0 APY and weighted APY columns
-    pool_0_apy_col = 'apy_Pool_0'
+    # Define column names
+    pool_apy_col = f'apy_Pool_{pool_number}'
     weighted_apy_col = 'weighted_apy'
     
     # Check if columns exist
-    if pool_0_apy_col not in df.columns:
-        print(f"Warning: {pool_0_apy_col} not found in dataset")
-        print(f"Available APY columns: {[col for col in df.columns if col.startswith('apy_')]}")
+    if pool_apy_col not in df.columns:
+        print(f"Warning: {pool_apy_col} not found in dataset")
+        available_apy_cols = [col for col in df.columns if col.startswith('apy_')]
+        print(f"Available APY columns: {available_apy_cols}")
         return None
     
     if weighted_apy_col not in df.columns:
         print(f"Warning: {weighted_apy_col} not found in dataset")
         return None
     
-    # Create subset with pool 0 APY and weighted APY
-    result_df = df[[pool_0_apy_col, weighted_apy_col]].copy()
-    result_df.columns = ['Pool_0_APY', 'Weighted_APY']
+    # Create subset with pool APY and weighted APY
+    result_df = df[[pool_apy_col, weighted_apy_col]].copy()
+    result_df.columns = [f'Pool_{pool_number}_APY', 'Weighted_APY']
     
     return result_df
 
-def main():
+
+def export_to_csv(pool_data: pd.DataFrame, filename: str = None) -> str:
     """
-    Main function to load data and display pool 0 APY and weighted APY
+    Export pool data to CSV file.
+    
+    Args:
+        pool_data: DataFrame to export
+        filename: Output filename (optional, will generate if not provided)
+        
+    Returns:
+        Filename of exported CSV
     """
-    # Load data from database
-    df = load_pool_data("defi_prime_rate.db")
+    if filename is None:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"pool_apy_data_{timestamp}.csv"
     
-    if df is None:
-        print("Failed to load data. Exiting.")
-        return
+    pool_data.to_csv(filename)
+    print(f"\nData saved to {filename}")
+    print(f"CSV file contains {len(pool_data)} rows of data")
     
-    # Extract pool 0 APY and weighted APY data
-    pool_data = extract_pool_apy_data(df)
+    return filename
+
+
+def print_data_analysis(pool_data: pd.DataFrame) -> None:
+    """
+    Print comprehensive data analysis including head, tail, and statistics.
     
-    if pool_data is None:
-        print("Failed to extract pool data. Exiting.")
-        return
-    
-    # Print head and tail
+    Args:
+        pool_data: DataFrame to analyze
+    """
     print("\n=== HEAD (First 10 rows) ===")
     print(pool_data.head(10))
     
     print("\n=== TAIL (Last 10 rows) ===")
     print(pool_data.tail(10))
     
-    # Print summary statistics
     print("\n=== SUMMARY STATISTICS ===")
     print(pool_data.describe())
     
-    # Print current values
     print("\n=== CURRENT VALUES ===")
-    latest_data = pool_data.iloc[-1]
-    print(f"Latest Pool 0 APY: {latest_data['Pool_0_APY']:.4f}%")
-    print(f"Latest Weighted APY: {latest_data['Weighted_APY']:.4f}%")
+    if not pool_data.empty:
+        latest_data = pool_data.iloc[-1]
+        for col in pool_data.columns:
+            print(f"Latest {col}: {latest_data[col]:.4f}%")
+
+
+def main() -> None:
+    """
+    Main function to load data, extract pool information, and export to CSV.
+    """
+    print("=== SPR Database CSV Export ===")
     
-    # Save to CSV
-    csv_filename = "pool_0_apy_data.csv"
-    pool_data.to_csv(csv_filename)
-    print(f"\nData saved to {csv_filename}")
-    print(f"CSV file contains {len(pool_data)} rows of data")
+    # Load data from database
+    df, metadata_df = load_data_from_db(DEFAULT_DB_FILENAME)
+    
+    if df is None:
+        print("Failed to load data. Exiting.")
+        return
+    
+    print_data_summary(df, "Database Data")
+    
+    # Extract pool 0 APY and weighted APY data
+    pool_data = extract_pool_apy_data(df, pool_number=0)
+    
+    if pool_data is None:
+        print("Failed to extract pool data. Exiting.")
+        return
+    
+    # Print analysis
+    print_data_analysis(pool_data)
+    
+    # Export to CSV
+    csv_filename = export_to_csv(pool_data, "pool_0_apy_data.csv")
+    
+    print(f"\n=== Export Complete ===")
+    print(f"Data exported to: {csv_filename}")
+
 
 if __name__ == "__main__":
     main()

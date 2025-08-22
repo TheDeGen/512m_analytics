@@ -1,34 +1,49 @@
+"""
+Stablecoin Prime Rate (SPR) Fetcher Module
+
+This module fetches top stablecoin pools by TVL from DeFiLlama,
+processes the data, and saves it to a SQLite database for analysis.
+"""
+
 import requests
 import pandas as pd
 import sqlite3
 import time
 from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional, Tuple
 
-# DeFiLlama API endpoints
-YIELDS_ENDPOINT = "https://yields.llama.fi/pools"
-CHART_ENDPOINT = "https://yields.llama.fi/chart/"
+from config import (
+    API_ENDPOINTS, DEFAULT_DB_FILENAME, DEFAULT_FETCH_DAYS, 
+    RATE_LIMIT_DELAY, ROLLING_WINDOW_SIZES
+)
+from utils import (
+    fetch_pool_chart_data, purge_database, safe_api_request,
+    validate_dataframe, print_data_summary
+)
 
-def fetch_top_stablecoin_pools_by_tvl(limit=100):
+
+def fetch_top_stablecoin_pools_by_tvl(limit: int = 100) -> List[Dict[str, Any]]:
     """
-    Fetch the top stablecoin pools by TVL from DeFiLlama yields API
+    Fetch the top stablecoin pools by TVL from DeFiLlama yields API.
     
     Args:
-        limit (int): Number of top pools to fetch
+        limit: Number of top pools to fetch
         
     Returns:
-        list: List of pool dictionaries sorted by TVL
+        List of pool dictionaries sorted by TVL
     """
     try:
         print(f"Fetching top {limit} stablecoin pools by TVL...")
-        response = requests.get(YIELDS_ENDPOINT)
+        response = safe_api_request(API_ENDPOINTS['defi_llama_yields'])
         
-        if response.status_code == 200:
+        if response and response.status_code == 200:
             data = response.json()
             
             # Filter for stablecoin pools only, excluding Merkl (yield farming) and 0% APY pools
             stablecoin_pools = []
             merkl_pools_excluded = 0
             zero_apy_pools_excluded = 0
+            
             for pool in data['data']:
                 if (pool.get('tvlUsd') is not None and pool['tvlUsd'] > 0 and 
                     pool.get('stablecoin') == True):
@@ -51,116 +66,25 @@ def fetch_top_stablecoin_pools_by_tvl(limit=100):
             print(f"Successfully fetched {len(top_pools)} stablecoin pools with highest TVL")
             return top_pools
         else:
-            print(f"Error fetching pools: {response.status_code}")
+            error_code = response.status_code if response else "No response"
+            print(f"Error fetching pools: {error_code}")
             return []
     except Exception as e:
         print(f"Error fetching pools: {e}")
         return []
 
-def fetch_pool_chart_data(pool_id, pool_name, days=360):
+
+def merge_and_save_pool_data(pool_data: Dict[str, Dict[str, Any]], 
+                           db_filename: str = DEFAULT_DB_FILENAME) -> Optional[pd.DataFrame]:
     """
-    Fetch historical chart data for a specific pool with rate limiting
+    Merge all pool data by date and save to SQLite database.
     
     Args:
-        pool_id (str): Pool ID from DeFiLlama
-        pool_name (str): Pool name for logging
-        days (int): Number of days of historical data to fetch
+        pool_data: Dictionary containing pool data
+        db_filename: SQLite database filename
         
     Returns:
-        pd.DataFrame: DataFrame with historical APY and TVL data, or None if failed
-    """
-    try:
-        print(f"Fetching data for {pool_name}...")
-        url = f"{CHART_ENDPOINT}{pool_id}"
-        response = requests.get(url)
-        
-        # Handle rate limiting
-        if response.status_code == 429:
-            print(f"Rate limited for {pool_name}, waiting 2 seconds...")
-            time.sleep(2)
-            response = requests.get(url)
-        
-        if response.status_code == 200:
-            data = response.json()
-            
-            # Extract data array
-            if isinstance(data, dict) and 'data' in data:
-                data = data['data']
-            
-            if isinstance(data, list) and len(data) > 0:
-                df = pd.DataFrame(data)
-                
-                # Convert timestamp to datetime
-                if 'timestamp' in df.columns:
-                    try:
-                        df['date'] = pd.to_datetime(df['timestamp'], unit='s')
-                    except (ValueError, TypeError):
-                        try:
-                            df['date'] = pd.to_datetime(df['timestamp'])
-                        except (ValueError, TypeError):
-                            print(f"Could not parse timestamp format for pool {pool_name}")
-                            return None
-                    
-                    df.set_index('date', inplace=True)
-                    
-                    # Make index timezone-naive
-                    if df.index.tz is not None:
-                        df.index = df.index.tz_localize(None)
-                    
-                    # Filter to last N days
-                    cutoff_date = datetime.now() - timedelta(days=days)
-                    df = df[df.index >= cutoff_date]
-                    
-                    print(f"Successfully fetched {len(df)} data points for {pool_name}")
-                    return df
-                else:
-                    print(f"No timestamp found in data for pool {pool_name}")
-                    return None
-            else:
-                print(f"Unexpected data format for pool {pool_name}")
-                return None
-        else:
-            print(f"Error fetching chart data for pool {pool_name}: {response.status_code}")
-            return None
-    except Exception as e:
-        print(f"Error fetching chart data for pool {pool_name}: {e}")
-        return None
-
-def purge_database(db_filename="defi_prime_rate.db"):
-    """
-    Completely purge the database before fresh data insertion
-    
-    Args:
-        db_filename (str): SQLite database filename
-    """
-    print(f"Purging existing database: {db_filename}")
-    try:
-        conn = sqlite3.connect(db_filename)
-        cursor = conn.cursor()
-        
-        # Drop existing tables if they exist
-        cursor.execute("DROP TABLE IF EXISTS pool_data")
-        cursor.execute("DROP TABLE IF EXISTS pool_metadata")
-        
-        # Clean up any other artifacts
-        cursor.execute("VACUUM")
-        
-        conn.commit()
-        conn.close()
-        print("Database purged successfully")
-    except Exception as e:
-        print(f"Warning: Could not purge database: {e}")
-
-def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
-    """
-    Merge all pool data by date and save to SQLite database
-    
-    Args:
-        pool_data (dict): Dictionary containing pool data
-        db_filename (str): SQLite database filename
-        
-    Returns:
-        pd.DataFrame: Merged and cleaned DataFrame, or None if failed
+        Merged and cleaned DataFrame, or None if failed
     """
     print("Merging pool data...")
     merged_df = None
@@ -205,6 +129,27 @@ def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
     print(f"Successfully merged data for {len(pool_data)} pools")
     
     # Clean up data by removing NaN values
+    merged_df = _clean_merged_data(merged_df)
+    
+    # Calculate weighted average APY
+    merged_df = _calculate_weighted_metrics(merged_df)
+    
+    # Save to SQLite database
+    _save_to_database(merged_df, pool_data, db_filename)
+    
+    return merged_df
+
+
+def _clean_merged_data(merged_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean merged data by removing NaN values and incomplete pools.
+    
+    Args:
+        merged_df: Merged DataFrame to clean
+        
+    Returns:
+        Cleaned DataFrame
+    """
     print("Cleaning data by removing NaN values...")
     
     # Drop columns that are all NaN (pools with no data)
@@ -237,8 +182,19 @@ def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
         print(f"Dropped {len(pools_to_drop)//2} pools with incomplete data")
     
     print(f"Final dataset: {len(merged_df)} rows, {len(merged_df.columns)} columns")
+    return merged_df
+
+
+def _calculate_weighted_metrics(merged_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate weighted average APY and moving averages.
     
-    # Calculate weighted average APY
+    Args:
+        merged_df: DataFrame with pool data
+        
+    Returns:
+        DataFrame with calculated metrics
+    """
     print("Calculating weighted average APY...")
     apy_cols = [col for col in merged_df.columns if col.startswith('apy_')]
     tvl_cols = [col for col in merged_df.columns if col.startswith('tvlUsd_')]
@@ -253,10 +209,23 @@ def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
     
     merged_df['weighted_apy'] = merged_df['weighted_apy'] / total_tvl.replace(0, 1)
     
-    # Calculate 14-day moving average
-    merged_df['ma_apy_14d'] = merged_df['weighted_apy'].rolling(window=14, min_periods=1).mean()
+    # Calculate moving averages
+    window_size = ROLLING_WINDOW_SIZES['short']
+    merged_df['ma_apy_14d'] = merged_df['weighted_apy'].rolling(window=window_size, min_periods=1).mean()
     
-    # Save to SQLite database
+    return merged_df
+
+
+def _save_to_database(merged_df: pd.DataFrame, pool_data: Dict[str, Dict[str, Any]], 
+                     db_filename: str) -> None:
+    """
+    Save merged data and metadata to SQLite database.
+    
+    Args:
+        merged_df: Merged DataFrame to save
+        pool_data: Original pool data for metadata
+        db_filename: Database filename
+    """
     print(f"Saving data to SQLite database: {db_filename}")
     conn = sqlite3.connect(db_filename)
     
@@ -269,6 +238,31 @@ def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
     merged_df.to_sql('pool_data', conn, if_exists='replace', index=True)
     
     # Save pool metadata (only for pools in final dataset)
+    pool_metadata = _create_pool_metadata(merged_df, pool_data)
+    metadata_df = pd.DataFrame(pool_metadata)
+    metadata_df.to_sql('pool_metadata', conn, if_exists='replace', index=False)
+    
+    # Final cleanup
+    cursor.execute("VACUUM")
+    conn.commit()
+    conn.close()
+    
+    print(f"Data successfully saved to {db_filename}")
+    print(f"Final dataset contains {len(pool_metadata)} pools with valid data")
+
+
+def _create_pool_metadata(merged_df: pd.DataFrame, 
+                         pool_data: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Create metadata for pools that made it into the final dataset.
+    
+    Args:
+        merged_df: Final merged DataFrame
+        pool_data: Original pool data
+        
+    Returns:
+        List of pool metadata dictionaries
+    """
     pool_metadata = []
     final_pool_names = set()
     
@@ -289,101 +283,34 @@ def merge_and_save_pool_data(pool_data, db_filename="defi_prime_rate.db"):
                 'last_updated': datetime.now().isoformat()
             })
     
-    metadata_df = pd.DataFrame(pool_metadata)
-    metadata_df.to_sql('pool_metadata', conn, if_exists='replace', index=False)
-    
-    # Final cleanup
-    cursor.execute("VACUUM")
-    conn.commit()
-    conn.close()
-    print(f"Data successfully saved to {db_filename}")
-    print(f"Final dataset contains {len(final_pool_names)} pools with valid data")
-    
-    return merged_df
+    return pool_metadata
 
-def load_data_from_db(db_filename="defi_prime_rate.db"):
+
+def fetch_and_process_pools(limit: int = 100, days: int = DEFAULT_FETCH_DAYS) -> Dict[str, Dict[str, Any]]:
     """
-    Load data from SQLite database
+    Fetch and process data for top stablecoin pools.
     
     Args:
-        db_filename (str): SQLite database filename
+        limit: Number of top pools to fetch
+        days: Number of days of historical data to fetch
         
     Returns:
-        tuple: (merged_df, metadata_df) or (None, None) if failed
+        Dictionary containing processed pool data
     """
-    try:
-        print(f"Loading data from {db_filename}...")
-        conn = sqlite3.connect(db_filename)
-        
-        # Check what tables exist
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
-        tables = cursor.fetchall()
-        print(f"Tables in database: {[table[0] for table in tables]}")
-        
-        # Load main data
-        try:
-            merged_df = pd.read_sql('SELECT * FROM pool_data', conn, index_col='index')
-        except:
-            try:
-                merged_df = pd.read_sql('SELECT * FROM pool_data', conn)
-                if len(merged_df.columns) > 0:
-                    first_col = merged_df.columns[0]
-                    if 'date' in first_col.lower() or 'time' in first_col.lower():
-                        merged_df.set_index(first_col, inplace=True)
-                    else:
-                        merged_df.set_index(first_col, inplace=True)
-            except Exception as e:
-                print(f"Error reading pool_data table: {e}")
-                cursor.execute("PRAGMA table_info(pool_data);")
-                columns = cursor.fetchall()
-                print("Pool_data table structure:")
-                for col in columns:
-                    print(f"  {col[1]} ({col[2]})")
-                return None, None
-        
-        # Convert index to datetime if needed
-        if not isinstance(merged_df.index, pd.DatetimeIndex):
-            try:
-                merged_df.index = pd.to_datetime(merged_df.index)
-            except:
-                print("Warning: Could not convert index to datetime")
-        
-        # Load metadata
-        try:
-            metadata_df = pd.read_sql('SELECT * FROM pool_metadata', conn)
-        except Exception as e:
-            print(f"Error reading pool_metadata table: {e}")
-            metadata_df = pd.DataFrame()
-        
-        conn.close()
-        
-        print(f"Successfully loaded data for {len(metadata_df)} pools")
-        return merged_df, metadata_df
-    except Exception as e:
-        print(f"Error loading data from database: {e}")
-        return None, None
-
-def main():
-    """
-    Main function to fetch, process, and save DeFi Prime Rate data
-    """
-    # Purge existing database to ensure fresh data
-    print("\n=== Purging existing database ===")
-    purge_database()
-    
-    # Fetch top 100 stablecoin pools by TVL
-    print("\n=== Fetching top 100 stablecoin pools by TVL ===")
-    top_pools = fetch_top_stablecoin_pools_by_tvl(100)
+    # Fetch top pools
+    top_pools = fetch_top_stablecoin_pools_by_tvl(limit)
     
     if not top_pools:
         print("No pools fetched. Exiting.")
-        return
+        return {}
     
     # Display top pools info
     print("\nTop 10 pools by TVL:")
     for i, pool in enumerate(top_pools[:10]):
-        print(f"{i+1}. {pool.get('name', 'Unknown')} - TVL: ${pool['tvlUsd']:,.0f} - APY: {pool.get('apy', 0):.2f}%")
+        tvl = pool['tvlUsd']
+        apy = pool.get('apy', 0)
+        name = pool.get('name', 'Unknown')
+        print(f"{i+1}. {name} - TVL: ${tvl:,.0f} - APY: {apy:.2f}%")
     
     # Fetch historical data for each pool
     print(f"\nFetching historical data for {len(top_pools)} pools...")
@@ -393,8 +320,8 @@ def main():
         pool_id = pool['pool']
         pool_name = pool.get('name', f'Pool_{i}')
         
-        df = fetch_pool_chart_data(pool_id, pool_name)
-        if df is not None and not df.empty:
+        df = fetch_pool_chart_data(pool_id, pool_name, days)
+        if validate_dataframe(df):
             pool_data[pool_id] = {
                 'data': df,
                 'name': pool_name,
@@ -403,20 +330,19 @@ def main():
             }
         
         # Add small delay to avoid rate limiting
-        time.sleep(0.1)
+        time.sleep(RATE_LIMIT_DELAY)
     
-    if not pool_data:
-        print("No pool data fetched successfully. Exiting.")
-        return
+    return pool_data
+
+
+def print_summary_statistics(merged_df: pd.DataFrame, pool_data: Dict[str, Dict[str, Any]]) -> None:
+    """
+    Print comprehensive summary statistics for the dataset.
     
-    # Merge and save data to database
-    merged_df = merge_and_save_pool_data(pool_data)
-    
-    if merged_df is None:
-        print("Failed to merge and save data. Exiting.")
-        return
-    
-    # Print summary statistics
+    Args:
+        merged_df: Merged DataFrame with all pool data
+        pool_data: Original pool data dictionary
+    """
     print("\n=== Summary Statistics ===")
     print(f"Database contains data for {len(pool_data)} pools")
     print(f"Date range: {merged_df.index.min()} to {merged_df.index.max()}")
@@ -436,6 +362,34 @@ def main():
     
     print(f"\nDatabase has been completely refreshed with current data.")
     print(f"All old data has been purged to prevent stale information.")
+
+
+def main() -> None:
+    """
+    Main function to fetch, process, and save DeFi Prime Rate data.
+    """
+    # Purge existing database to ensure fresh data
+    print("\n=== Purging existing database ===")
+    purge_database()
+    
+    # Fetch and process pools
+    print("\n=== Fetching top 100 stablecoin pools by TVL ===")
+    pool_data = fetch_and_process_pools(limit=100, days=360)
+    
+    if not pool_data:
+        print("No pool data fetched successfully. Exiting.")
+        return
+    
+    # Merge and save data to database
+    merged_df = merge_and_save_pool_data(pool_data)
+    
+    if merged_df is None:
+        print("Failed to merge and save data. Exiting.")
+        return
+    
+    # Print summary statistics
+    print_summary_statistics(merged_df, pool_data)
+
 
 if __name__ == "__main__":
     main()
