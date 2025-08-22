@@ -4,13 +4,13 @@ from datetime import datetime
 
 def load_pool_data(db_filename="defi_prime_rate.db"):
     """
-    Load data from SQLite database and extract pool 1 APY and weighted APY
+    Load data from SQLite database and extract pool 0 APY and weighted APY
     
     Args:
         db_filename (str): SQLite database filename
         
     Returns:
-        pd.DataFrame: DataFrame with pool 1 APY and weighted APY
+        pd.DataFrame: DataFrame with pool 0 APY and weighted APY
     """
     try:
         print(f"Loading data from {db_filename}...")
@@ -46,12 +46,12 @@ def extract_pool_apy_data(df):
         pd.DataFrame: DataFrame with pool 0 APY and weighted APY
     """
     # Extract pool 0 APY and weighted APY columns
-    pool_1_apy_col = 'apy_Pool_0'
+    pool_0_apy_col = 'apy_Pool_0'
     weighted_apy_col = 'weighted_apy'
     
     # Check if columns exist
-    if pool_1_apy_col not in df.columns:
-        print(f"Warning: {pool_1_apy_col} not found in dataset")
+    if pool_0_apy_col not in df.columns:
+        print(f"Warning: {pool_0_apy_col} not found in dataset")
         print(f"Available APY columns: {[col for col in df.columns if col.startswith('apy_')]}")
         return None
     
@@ -60,7 +60,7 @@ def extract_pool_apy_data(df):
         return None
     
     # Create subset with pool 0 APY and weighted APY
-    result_df = df[[pool_1_apy_col, weighted_apy_col]].copy()
+    result_df = df[[pool_0_apy_col, weighted_apy_col]].copy()
     result_df.columns = ['Pool_0_APY', 'Weighted_APY']
     
     return result_df
@@ -84,11 +84,11 @@ def main():
         return
     
     # Print head and tail
-    print("\n=== HEAD (First 15 rows) ===")
+    print("\n=== HEAD (First 10 rows) ===")
     print(pool_data.head(10))
     
     print("\n=== TAIL (Last 10 rows) ===")
-    print(pool_data.tail(15))
+    print(pool_data.tail(10))
     
     # Print summary statistics
     print("\n=== SUMMARY STATISTICS ===")

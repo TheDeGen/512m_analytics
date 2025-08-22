@@ -119,7 +119,7 @@ def analyze_recent_correlations(data):
     print(f"Date range: {combined_df.index.min()} to {combined_df.index.max()}")
     
     # Calculate returns
-    returns_df = combined_df.pct_change(fill_method=None).dropna()
+    returns_df = combined_df.pct_change().dropna()
     print(f"Returns data: {len(returns_df)} observations")
     
     # Calculate overall correlations

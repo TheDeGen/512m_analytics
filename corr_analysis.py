@@ -202,7 +202,7 @@ def main():
         return
     
     # Calculate returns
-    returns = df.pct_change(fill_method=None).dropna()
+    returns = df.pct_change().dropna()
     print(f"\nReturns data shape: {returns.shape}")
     
     # Create windows for correlation calculation
@@ -325,9 +325,12 @@ def main():
     fig3, (ax5, ax6, ax7) = plt.subplots(3, 1, figsize=(12, 10))
     
     # First subplot - BTC-SPY betas
-    # Calculate 30-day and 90-day betas
-    btc_spy_30d = returns['BTC'].rolling(window=30).cov(returns['SPY']) / returns['SPY'].rolling(window=30).var()
-    btc_spy_90d = returns['BTC'].rolling(window=90).cov(returns['SPY']) / returns['SPY'].rolling(window=90).var()
+    # Calculate 30-day and 90-day betas with division by zero protection
+    spy_var_30d = returns['SPY'].rolling(window=30).var()
+    spy_var_90d = returns['SPY'].rolling(window=90).var()
+    
+    btc_spy_30d = returns['BTC'].rolling(window=30).cov(returns['SPY']) / spy_var_30d.where(spy_var_30d > 1e-10, np.nan)
+    btc_spy_90d = returns['BTC'].rolling(window=90).cov(returns['SPY']) / spy_var_90d.where(spy_var_90d > 1e-10, np.nan)
     
     ax5.plot(btc_spy_30d.index, btc_spy_30d, label='30-day', linewidth=2, color=muted_blues[0], alpha=0.2)
     ax5.plot(btc_spy_90d.index, btc_spy_90d, label='90-day', linewidth=2, color=muted_blues[2])
@@ -342,8 +345,8 @@ def main():
 
     
     # Second subplot - ETH-SPY betas
-    eth_spy_30d = returns['ETH'].rolling(window=30).cov(returns['SPY']) / returns['SPY'].rolling(window=30).var()
-    eth_spy_90d = returns['ETH'].rolling(window=90).cov(returns['SPY']) / returns['SPY'].rolling(window=90).var()
+    eth_spy_30d = returns['ETH'].rolling(window=30).cov(returns['SPY']) / spy_var_30d.where(spy_var_30d > 1e-10, np.nan)
+    eth_spy_90d = returns['ETH'].rolling(window=90).cov(returns['SPY']) / spy_var_90d.where(spy_var_90d > 1e-10, np.nan)
     
     ax6.plot(eth_spy_30d.index, eth_spy_30d, label='30-day', linewidth=2, color=muted_blues[0], alpha=0.2)
     ax6.plot(eth_spy_90d.index, eth_spy_90d, label='90-day', linewidth=2, color=muted_blues[2])
@@ -357,8 +360,11 @@ def main():
     ax6.grid(True, alpha=0.3)
     
     # Third subplot - ETH-BTC betas
-    eth_btc_30d = returns['ETH'].rolling(window=30).cov(returns['BTC']) / returns['BTC'].rolling(window=30).var()
-    eth_btc_90d = returns['ETH'].rolling(window=90).cov(returns['BTC']) / returns['BTC'].rolling(window=90).var()
+    btc_var_30d = returns['BTC'].rolling(window=30).var()
+    btc_var_90d = returns['BTC'].rolling(window=90).var()
+    
+    eth_btc_30d = returns['ETH'].rolling(window=30).cov(returns['BTC']) / btc_var_30d.where(btc_var_30d > 1e-10, np.nan)
+    eth_btc_90d = returns['ETH'].rolling(window=90).cov(returns['BTC']) / btc_var_90d.where(btc_var_90d > 1e-10, np.nan)
     
     ax7.plot(eth_btc_30d.index, eth_btc_30d, label='30-day', linewidth=2, color=muted_blues[0], alpha=0.2)
     ax7.plot(eth_btc_90d.index, eth_btc_90d, label='90-day', linewidth=2, color=muted_blues[2])
