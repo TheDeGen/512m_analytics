@@ -1,0 +1,40 @@
+DeFi Machine Learning Analysis Report
+==================================================
+Generated: 2025-08-22 18:20:40
+
+PREDICTION MODELING
+--------------------
+Best model: Random Forest
+Test R² score: 0.995
+Test RMSE: 0.081
+
+Top 5 Important Features:
+  weighted_apy: 0.982
+  weighted_ma_7d: 0.014
+  market_volatility: 0.001
+  weighted_volatility: 0.001
+  market_momentum: 0.000
+
+ANOMALY DETECTION
+------------------
+Anomalies detected: 36
+Percentage of data: 10.1%
+Recent anomaly dates:
+  2024-12-31
+  2025-02-11
+  2025-02-12
+
+MARKET STATISTICS
+-----------------
+Mean APY: 7.97%
+Std Dev: 4.60%
+Range: 3.97% - 25.66%
+Current APY: 6.70%
+30-day trend: +0.63%
+
+POOL CORRELATIONS
+----------------
+Highest correlation: 1.000
+Lowest correlation: 1.000
+
+Analysis completed successfully.
